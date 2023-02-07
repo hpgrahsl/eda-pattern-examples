@@ -1,0 +1,126 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: app-config
+data:
+  APP_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  APP_KAFKA_TOPIC: my_image_stream_topic
+  APP_PATH_TO_IMAGES: /home/data/images
+  APP_NUM_RECORDS: '500'
+  APP_DELAY_MILLIS: '1500'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"kafka"},{"apiVersion":"apps/v1","kind":"Deployment","name":"minio"}]'
+  name: eda-ccp-producer
+  labels:
+    app: eda-ccp-producer
+    app.kubernetes.io/part-of: claim-check-pattern
+spec:
+  selector:
+    matchLabels:
+      app: eda-ccp-producer
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: eda-ccp-producer
+    spec:
+      containers:
+      - image: quay.io/rhdevelopers/eda-claim-check-pattern-with-demo-data:v23.02
+        name: eda-ccp-producer
+        args: ["producer"]
+        env:
+          - name: APP_KAFKA_BOOTSTRAP_SERVERS
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: APP_KAFKA_BOOTSTRAP_SERVERS
+          - name: APP_PATH_TO_IMAGES
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: APP_PATH_TO_IMAGES
+          - name: APP_NUM_RECORDS
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: APP_NUM_RECORDS
+          - name: APP_DELAY_MILLIS
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: APP_DELAY_MILLIS
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"kafka"},{"apiVersion":"apps/v1","kind":"Deployment","name":"minio"}]'
+  name: eda-ccp-consumer
+  labels:
+    app: eda-ccp-consumer
+    app.kubernetes.io/part-of: claim-check-pattern
+spec:
+  selector:
+    matchLabels:
+      app: eda-ccp-consumer
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: eda-ccp-consumer
+    spec:
+      containers:
+      - image: quay.io/rhdevelopers/eda-claim-check-pattern:v23.02
+        name: eda-ccp-consumer
+        args: ["consumer"]
+        env:
+          - name: APP_KAFKA_BOOTSTRAP_SERVERS
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: APP_KAFKA_BOOTSTRAP_SERVERS
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"kafka"}]'
+  name: console-consumer
+  labels:
+    app: console-consumer
+    app.kubernetes.io/part-of: claim-check-pattern
+spec:
+  selector:
+    matchLabels:
+      app: console-consumer
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: console-consumer
+    spec:
+      containers:
+      - image: quay.io/strimzi/kafka:0.33.0-kafka-3.3.2
+        name: console-consumer
+        env:
+          - name: APP_KAFKA_BOOTSTRAP_SERVERS
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: APP_KAFKA_BOOTSTRAP_SERVERS
+          - name: APP_KAFKA_TOPIC
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: APP_KAFKA_TOPIC
+        command: [
+          "sh", "-c",
+          "bin/kafka-console-consumer.sh --bootstrap-server $${APP_KAFKA_BOOTSTRAP_SERVERS} --topic $${APP_KAFKA_TOPIC} --from-beginning --property print.key=true --property key.separator=' -> '"
+        ]

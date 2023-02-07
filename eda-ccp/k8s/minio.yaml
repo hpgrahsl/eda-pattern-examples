@@ -1,0 +1,130 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: infra-config
+data:
+  MINIO_ALIAS: myminio
+  MINIO_BUCKET: eda-ccp-s3
+  MINIO_CFG_DIR: /home/.mc/config
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: infra-secrets
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: admin
+  MINIO_ROOT_PASSWORD: minio12345
+  ACCESS_KEY: l0w8nBo4n61eTqe1
+  SECRET_KEY: v72uuD5yu0l3LtfWuxpqyoWZBOXOGOdN
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  labels:
+    app: minio
+spec:
+  ports:
+    - port: 9000
+      name: minio-api
+    - port: 9001
+      name: minio-console
+  selector:
+    app: minio
+  type: LoadBalancer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  labels:
+    app: minio
+    app.kubernetes.io/part-of: demo-infra
+spec:
+  selector:
+    matchLabels:
+      app: minio
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+      - image: minio/minio:RELEASE.2023-01-31T02-24-19Z
+        name: minio
+        command: ["/bin/sh"]
+        args: ["-c","minio server /data --console-address ':9001'"]
+        env:
+          - name: MINIO_ROOT_USER
+            valueFrom:
+              secretKeyRef:
+                name: infra-secrets
+                key: MINIO_ROOT_USER
+          - name: MINIO_ROOT_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: infra-secrets
+                key: MINIO_ROOT_PASSWORD
+        ports:
+          - containerPort: 9000
+            name: minio-api
+          - containerPort: 9001
+            name: minio-console
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-bucket-init 
+  labels:
+    app: minio
+    app.kubernetes.io/part-of: demo-infra
+spec:
+  template:
+    spec:
+      containers:
+      - name: minio-bucket-init
+        image: quay.io/rhdevelopers/minio-mc-custom:v23.02
+        command: ["/bin/sh","-c",
+          "mc --config-dir $${MINIO_CFG_DIR} alias set $${MINIO_ALIAS} http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};mc --config-dir $${MINIO_CFG_DIR} mb $${MINIO_ALIAS}/$${MINIO_BUCKET};mc --config-dir $${MINIO_CFG_DIR} anonymous set public $${MINIO_ALIAS}/$${MINIO_BUCKET};mc --config-dir $${MINIO_CFG_DIR} admin user svcacct add --access-key $${ACCESS_KEY} --secret-key $${SECRET_KEY} $${MINIO_ALIAS} $${MINIO_ROOT_USER};"
+        ]
+        env:
+        - name: MINIO_CFG_DIR
+          valueFrom:
+              configMapKeyRef:
+                name: infra-config
+                key: MINIO_CFG_DIR
+        - name: MINIO_ALIAS
+          valueFrom:
+              configMapKeyRef:
+                name: infra-config
+                key: MINIO_ALIAS
+        - name: MINIO_BUCKET
+          valueFrom:
+              configMapKeyRef:
+                name: infra-config
+                key: MINIO_BUCKET
+        - name: MINIO_ROOT_USER
+          valueFrom:
+            secretKeyRef:
+              name: infra-secrets
+              key: MINIO_ROOT_USER
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: infra-secrets
+              key: MINIO_ROOT_PASSWORD
+        - name: ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: infra-secrets
+              key: ACCESS_KEY
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: infra-secrets
+              key: SECRET_KEY
+      restartPolicy: OnFailure
+  backoffLimit: 10
