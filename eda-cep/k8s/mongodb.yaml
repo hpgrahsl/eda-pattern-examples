@@ -1,0 +1,50 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  labels:
+    app: mongodb
+spec:
+  ports:
+    - port: 27017
+  selector:
+    app: mongodb
+  type: ClusterIP  
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb
+  labels:
+    app: mongodb
+    app.kubernetes.io/part-of: demo-infra
+    app.openshift.io/runtime: mongodb
+spec:
+  selector:
+    matchLabels:
+      app: mongodb
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:6.0.2
+          args: ["--port", "27017", "--bind_ip_all"]
+          ports:
+            - name: mongodb
+              containerPort: 27017
+          volumeMounts:
+            - name: mongo-config-dir
+              mountPath: /data/configdb
+            - name: mongo-data-dir
+              mountPath: /data/db
+      volumes:
+        - name: mongo-config-dir
+          emptyDir: {}
+        - name: mongo-data-dir
+          emptyDir: {}

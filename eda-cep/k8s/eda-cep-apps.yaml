@@ -1,0 +1,68 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: app-config
+data:
+  APP_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"kafka"}]'
+  name: eda-cep-generator
+  labels:
+    app: eda-cep-generator
+    app.kubernetes.io/part-of: content-enricher-pattern
+    app.openshift.io/runtime: quarkus
+spec:
+  selector:
+    matchLabels:
+      app: eda-cep-generator
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: eda-cep-generator
+    spec:
+      containers:
+      - image: quay.io/rhdevelopers/eda-cep-data-generator:v23.02
+        name: eda-cep-generator
+        env:
+          - name: APP_KAFKA_BOOTSTRAP_SERVERS
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: APP_KAFKA_BOOTSTRAP_SERVERS
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"kafka"}]'
+  name: eda-cep-enricher
+  labels:
+    app: eda-cep-enricher
+    app.kubernetes.io/part-of: content-enricher-pattern
+    app.openshift.io/runtime: quarkus
+spec:
+  selector:
+    matchLabels:
+      app: eda-cep-enricher
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: eda-cep-enricher
+    spec:
+      containers:
+      - image: quay.io/rhdevelopers/eda-cep-data-enricher:v23.02
+        name: eda-cep-enricher
+        env:
+          - name: APP_KAFKA_BOOTSTRAP_SERVERS
+            valueFrom:
+              configMapKeyRef:
+                name: app-config
+                key: APP_KAFKA_BOOTSTRAP_SERVERS

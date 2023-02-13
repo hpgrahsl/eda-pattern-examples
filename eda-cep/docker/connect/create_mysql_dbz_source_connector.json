@@ -1,0 +1,31 @@
+{
+    "name": "iot-device-data-source-001",
+    "config": {
+        "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+        "key.converter": "org.apache.kafka.connect.converters.IntegerConverter",
+        "key.converter.schemas.enable": false,
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": false,
+        "tasks.max": "1",
+        "database.hostname": "mysql",
+        "database.port": "3306",
+        "database.user": "root",
+        "database.password": "debezium",
+        "database.server.id": "12345",
+        "database.include.list": "iot_db",
+        "table.include.list": "iot_db.devices",
+        "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+        "schema.history.internal.kafka.topic": "schemachanges.iot_db",
+        "topic.prefix": "mysql",
+        "transforms": "extractId,unwrap",
+        "transforms.extractId.type": "org.apache.kafka.connect.transforms.ExtractField$Key",
+        "transforms.extractId.field": "id",
+        "transforms.extractId.predicate": "isPayloadTopic",
+        "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+        "transforms.unwrap.predicate": "isPayloadTopic",
+        "predicates": "isPayloadTopic",
+        "predicates.isPayloadTopic.type": "org.apache.kafka.connect.transforms.predicates.TopicNameMatches",
+        "predicates.isPayloadTopic.pattern": ".*devices",
+        "include.schema.changes": false
+    }
+}

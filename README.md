@@ -30,7 +30,7 @@ There are two different ways to run this example scenario.
 
 #### **Docker Compose**
 
-In case you want to run this locally, simply go in to the folder `eda-cpp/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output from the `eda-ccp-producer` and `eda-ccp-consumer` showing that images are produced to / consumed from a Kafka topic. Since the logs are interleaved in the main docker compose window, it's easier to inspect the logs in separate terminal windows as follows:
+In case you want to run this locally, simply go into the folder `eda-cpp/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output from the `eda-ccp-producer` and `eda-ccp-consumer` showing that images are produced to / consumed from a Kafka topic. Since the logs are interleaved in the main docker compose window, it's easier to inspect the logs in separate terminal windows as follows:
 
 `docker compose logs eda-ccp-producer`
 
@@ -130,4 +130,158 @@ In contrast, any Kafka client which hasn't been configured to use the specific S
 /home/data/images/josh-hild-_TuI8tZHlk4-unsplash.jpg -> s3://eda-ccp-s3/my_image_stream_topic/values/40810d79-9e91-4520-ae0b-5fa1c769726e
 /home/data/images/sebastian-unrau-sp-p7uuT0tw-unsplash.jpg -> s3://eda-ccp-s3/my_image_stream_topic/values/3befcabc-666d-4498-8cda-59405cf3f3cc
 ...
+```
+
+## Content Enricher Pattern Example
+
+### Example Overview
+
+The repository hosts a basic example which shows how to apply the _content enricher pattern_ when processing sensor data. The raw sensor data only contains an identifier for a particular device, however certain downstream consumers want to operate on additional device data. For that purpose, the device data needs to be ingested into Apache Kafka so that a stream processing application can join the raw sensor data with the device data. The illustration below shows a high-level overview:
+
+![eda-ccp-overview.png](docs/eda-cep-overview.png)
+
+### Implementation Details
+
+* The device data resides in a MySQL database table. This data is ingested into Apache Kafka by means of change-data-capture using the [Debezium MySQL source connector](https://debezium.io/documentation/reference/stable/connectors/mysql.html).
+
+* Both applications, the producer app and the enricher app are written with [Quarkus](https://quarkus.io). The producer app simulates a stream of random sensor data for 10 different device IDs. The enricher app consumes the device data which originates from the Debezium CDC-stream into a global table that is backed by a state store and essentially serves as lookup table. It also consumes the stream of raw sensor data records and joins each record against the device data based on the device id. All join results are continuously written back into a separate topic, which allows downstream consumers to directly operate on the enriched data.
+
+* The downstream consumer in this case is a [MongoDB sink connector](https://www.mongodb.com/docs/kafka-connector/current/) which writes the enriched data into a timeseries collection for data analytics purposes.
+
+### How to run it?
+
+There are two different ways to run this example scenario.
+
+#### **Docker Compose**
+
+In case you want to run this locally, simply go into the folder 
+`eda-cep/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output from the `eda-cep-generator` and `eda-cep-enricher` showing that raw sensor data records are consumed and joined against the device data to produce enriched sensor data. Since the logs are interleaved in the main docker compose window, it's easier to inspect the logs in separate terminal windows as follows:
+
+`docker compose logs eda-cep-generator`
+
+```log
+...
+
+eda-cep-generator  | 2023-02-13 10:48:43,200 INFO  [com.rh.dev.IotStreamGenerator] (executor-thread-0) producing sensor data -> SensorData[deviceId=1010, measurements={sensor-a=-9.0, sensor-b=98.54, sensor-c=35.7, sensor-d=92.0, sensor-e=0.563}, timestamp=2023-02-13T10:48:43.199950634]
+eda-cep-generator  | 2023-02-13 10:48:44,437 INFO  [com.rh.dev.IotStreamGenerator] (executor-thread-0) producing sensor data -> SensorData[deviceId=1007, measurements={sensor-a=-1.0, sensor-b=89.79, sensor-c=-45.6, sensor-d=97.0, sensor-e=0.907}, timestamp=2023-02-13T10:48:44.436796302]
+eda-cep-generator  | 2023-02-13 10:48:45,137 INFO  [com.rh.dev.IotStreamGenerator] (executor-thread-0) producing sensor data -> SensorData[deviceId=1004, measurements={sensor-a=-8.0, sensor-b=80.67, sensor-c=30.5, sensor-d=98.0, sensor-e=0.522}, timestamp=2023-02-13T10:48:45.137402510]
+...
+```
+
+`docker compose logs eda-cep-enricher`
+
+```log 
+...
+eda-cep-enricher  | 2023-02-13 10:48:51,758 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-2456e06a-b8f7-43cf-a4c3-1a8298ab8201-StreamThread-1) sensor data for deviceId: 1010 -> SensorData[deviceId=1010, measurements={sensor-a=-9.0, sensor-b=98.54, sensor-e=0.563, sensor-c=35.7, sensor-d=92.0}, timestamp=2023-02-13T10:48:43.199]
+eda-cep-enricher  | 2023-02-13 10:48:51,910 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-2456e06a-b8f7-43cf-a4c3-1a8298ab8201-StreamThread-1) enriched sensor data for deviceId: 1010 -> EnrichedSensorData[deviceId=1010, brand=Telit, active=false, location=Location[type=Point, coordinates=[-71.05977, 42.35843]], measurements={sensor-a=-9.0, sensor-b=98.54, sensor-e=0.563, sensor-c=35.7, sensor-d=92.0}, timestamp=2023-02-13T10:48:43.199]
+eda-cep-enricher  | 2023-02-13 10:48:52,093 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-2456e06a-b8f7-43cf-a4c3-1a8298ab8201-StreamThread-1) sensor data for deviceId: 1007 -> SensorData[deviceId=1007, measurements={sensor-a=-1.0, sensor-b=89.79, sensor-e=0.907, sensor-c=-45.6, sensor-d=97.0}, timestamp=2023-02-13T10:48:44.436]
+eda-cep-enricher  | 2023-02-13 10:48:52,095 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-2456e06a-b8f7-43cf-a4c3-1a8298ab8201-StreamThread-1) enriched sensor data for deviceId: 1007 -> EnrichedSensorData[deviceId=1007, brand=SoluLab, active=true, location=Location[type=Point, coordinates=[-78.63861, 35.7721]], measurements={sensor-a=-1.0, sensor-b=89.79, sensor-e=0.907, sensor-c=-45.6, sensor-d=97.0}, timestamp=2023-02-13T10:48:44.436]
+eda-cep-enricher  | 2023-02-13 10:48:52,103 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-2456e06a-b8f7-43cf-a4c3-1a8298ab8201-StreamThread-1) sensor data for deviceId: 1004 -> SensorData[deviceId=1004, measurements={sensor-a=-8.0, sensor-b=80.67, sensor-e=0.522, sensor-c=30.5, sensor-d=98.0}, timestamp=2023-02-13T10:48:45.137]
+eda-cep-enricher  | 2023-02-13 10:48:52,105 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-2456e06a-b8f7-43cf-a4c3-1a8298ab8201-StreamThread-1) enriched sensor data for deviceId: 1004 -> EnrichedSensorData[deviceId=1004, brand=GE Digital, active=true, location=Location[type=Point, coordinates=[2.15899, 41.38879]], measurements={sensor-a=-8.0, sensor-b=80.67, sensor-e=0.522, sensor-c=30.5, sensor-d=98.0}, timestamp=2023-02-13T10:48:45.137]
+...
+```
+
+To check the enriched data in the MongoDB collection, exec into the MongoDB shell inside the container with `docker compose exec mongodb mongosh` and run a simple query to show one sample document in the timeseries collection:
+
+```mongosh
+use iot_db;
+db.getCollection('sensors-ts').findOne();
+```
+
+which should give you a document similar to the following
+
+```
+{
+  timestamp: ISODate("2023-02-13T10:48:43.199Z"),
+  deviceId: Long("1010"),
+  active: false,
+  brand: 'Telit',
+  measurements: {
+    'sensor-a': -9,
+    'sensor-b': 98.54,
+    'sensor-e': 0.563,
+    'sensor-c': 35.7,
+    'sensor-d': 92
+  },
+  location: { coordinates: [ -71.05977, 42.35843 ], type: 'Point' },
+  _id: ObjectId("63ea15946f814d6ae0d34af9")
+}
+```
+
+#### **Kubernetes**
+
+In case you want to run this example in a Kubernetes environment, there are ready-made YAML manifests you can directly apply to your k8s cluster.
+
+1. Make sure your `kubectl` context is configured properly. 
+2. Then go into the main folder of the example `eda-cep` and simply run `kubectl apply -f k8s` in your terminal.
+3. All contained `.yaml` files - for infra and app components -  will get deployed into your configured cluster.
+
+After a few moments, everything should be up and running fine:
+
+`kubectl get pods`
+
+```bash
+NAME                                READY   STATUS      RESTARTS   AGE
+connect-5dbc4fcf7c-j5v62            1/1     Running     0          48s
+connectors-creator-tpv6w            0/1     Completed   0          48s
+eda-cep-enricher-5b4867dd5f-f6c6f   1/1     Running     0          45s
+eda-cep-generator-fc9d5d6b-tvxdz    1/1     Running     0          46s
+kafka-67cbf4cd74-vwswr              1/1     Running     0          44s
+mongodb-b768c557-dn5w2              1/1     Running     0          43s
+mysql-76f5fc46cc-z8762              1/1     Running     0          42s
+zookeeper-59f5fb6dff-gzggr          1/1     Running     0          45s
+```
+
+By checking the logs, you can inspect what happens in the applications. **Note, that you need to change the pod names accordingly** to match those reflected in your environment:
+
+`kubectl logs -f eda-cep-generator-fc9d5d6b-tvxdz`
+
+```log
+...
+
+2023-02-13 11:03:50,006 INFO  [com.rh.dev.IotStreamGenerator] (executor-thread-0) producing sensor data -> SensorData[deviceId=1009, measurements={sensor-e=0.302, sensor-d=94.0, sensor-c=32.8, sensor-b=61.32, sensor-a=-5.0}, timestamp=2023-02-13T11:03:50.005956047]
+2023-02-13 11:03:51,002 INFO  [com.rh.dev.IotStreamGenerator] (executor-thread-0) producing sensor data -> SensorData[deviceId=1006, measurements={sensor-e=0.517, sensor-d=92.0, sensor-c=-24.1, sensor-b=55.15, sensor-a=-6.0}, timestamp=2023-02-13T11:03:51.002677142]
+2023-02-13 11:03:52,002 INFO  [com.rh.dev.IotStreamGenerator] (executor-thread-0) producing sensor data -> SensorData[deviceId=1008, measurements={sensor-e=0.813, sensor-d=92.0, sensor-c=-19.3, sensor-b=3.96, sensor-a=-4.0}, timestamp=2023-02-13T11:03:52.002727776]
+...
+```
+
+`kubectl logs -f eda-cep-enricher-5b4867dd5f-f6c6f`
+
+```log
+...
+
+2023-02-13 11:04:18,874 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-650c2967-c8c0-4ade-8a61-f27d05c4603c-StreamThread-1) sensor data for deviceId: 1009 -> SensorData[deviceId=1009, measurements={sensor-a=-5.0, sensor-b=61.32, sensor-e=0.302, sensor-c=32.8, sensor-d=94.0}, timestamp=2023-02-13T11:03:50.005]
+2023-02-13 11:04:18,891 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-650c2967-c8c0-4ade-8a61-f27d05c4603c-StreamThread-1) enriched sensor data for deviceId: 1009 -> EnrichedSensorData[deviceId=1009, brand=Cisco, active=true, location=Location[type=Point, coordinates=[-74.0, 40.7166638]], measurements={sensor-a=-5.0, sensor-b=61.32, sensor-e=0.302, sensor-c=32.8, sensor-d=94.0}, timestamp=2023-02-13T11:03:50.005]
+2023-02-13 11:04:18,999 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-650c2967-c8c0-4ade-8a61-f27d05c4603c-StreamThread-1) sensor data for deviceId: 1006 -> SensorData[deviceId=1006, measurements={sensor-a=-6.0, sensor-b=55.15, sensor-e=0.517, sensor-c=-24.1, sensor-d=92.0}, timestamp=2023-02-13T11:03:51.002]
+2023-02-13 11:04:19,000 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-650c2967-c8c0-4ade-8a61-f27d05c4603c-StreamThread-1) enriched sensor data for deviceId: 1006 -> EnrichedSensorData[deviceId=1006, brand=Verizon, active=false, location=Location[type=Point, coordinates=[-0.12574, 51.50853]], measurements={sensor-a=-6.0, sensor-b=55.15, sensor-e=0.517, sensor-c=-24.1, sensor-d=92.0}, timestamp=2023-02-13T11:03:51.002]
+2023-02-13 11:04:19,002 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-650c2967-c8c0-4ade-8a61-f27d05c4603c-StreamThread-1) sensor data for deviceId: 1008 -> SensorData[deviceId=1008, measurements={sensor-a=-4.0, sensor-b=3.96, sensor-e=0.813, sensor-c=-19.3, sensor-d=92.0}, timestamp=2023-02-13T11:03:52.002]
+2023-02-13 11:04:19,002 INFO  [com.rh.dev.KStreamsEnricherTopology] (enricher-app-001-650c2967-c8c0-4ade-8a61-f27d05c4603c-StreamThread-1) enriched sensor data for deviceId: 1008 -> EnrichedSensorData[deviceId=1008, brand=Telit, active=false, location=Location[type=Point, coordinates=[-122.41942, 37.77493]], measurements={sensor-a=-4.0, sensor-b=3.96, sensor-e=0.813, sensor-c=-19.3, sensor-d=92.0}, timestamp=2023-02-13T11:03:52.002]
+...
+``` 
+
+To check the enriched data in the MongoDB collection, exec into the MongoDB shell inside the pod's container (_NOTE: adapt the pod's name accordingly_) with `kubectl exec -it mongodb-b768c557-dn5w2 -- mongosh` and run a simple query to show one sample document in the timeseries collection:
+
+```mongosh
+use iot_db;
+db.getCollection('sensors-ts').findOne();
+```
+
+which should give you a document similar to the following
+
+```
+{
+  timestamp: ISODate("2023-02-13T11:03:50.005Z"),
+  deviceId: Long("1009"),
+  active: true,
+  _id: ObjectId("63ea19330d43246cd9a6c3a2"),
+  brand: 'Cisco',
+  location: { coordinates: [ -74, 40.7166638 ], type: 'Point' },
+  measurements: {
+    'sensor-a': -5,
+    'sensor-b': 61.32,
+    'sensor-e': 0.302,
+    'sensor-c': 32.8,
+    'sensor-d': 94
+  }
+}
 ```
