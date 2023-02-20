@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: eda-mtp-consumer
+  labels:
+    app: eda-mtp-consumer
+spec:
+  ports:
+    - port: 8080
+  selector:
+    app: eda-mtp-consumer
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eda-mtp-consumer
+  labels:
+    app: eda-mtp-consumer
+    app.kubernetes.io/part-of: message-translator-pattern
+spec:
+  selector:
+    matchLabels:
+      app: eda-mtp-consumer
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: eda-mtp-consumer
+    spec:
+      containers:
+      - image: quay.io/rhdevelopers/eda-mtp-consumer-app:v23.02
+        name: eda-mtp-consumer
+        ports:
+        - containerPort: 8080

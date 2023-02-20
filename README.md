@@ -134,6 +134,8 @@ In contrast, any Kafka client which hasn't been configured to use the specific S
 
 ## Content Enricher Pattern Example
 
+In event-driven architectures, services communicate by means of different types of events. When producers send so-called notification events - which by definition contain a rather compact payload  - consumers oftentimes have the need to obtain additional information. In particular, whenever event payloads contain references to domain entities (e.g. userID, productID, orderID, ...) consumers might want to get additional data describing the referenced entity. The _content enricher pattern_ helps with making sure that event consumers have all the data they need, without them explicitly calling back to the producing service or reaching out to other services directly to fetch the data in question.
+
 ### Example Overview
 
 The repository hosts a basic example which shows how to apply the _content enricher pattern_ when processing sensor data. The raw sensor data only contains an identifier for a particular device, however certain downstream consumers want to operate on additional device data. For that purpose, the device data needs to be ingested into Apache Kafka so that a stream processing application can join the raw sensor data with the device data. The illustration below shows a high-level overview:
@@ -285,3 +287,157 @@ which should give you a document similar to the following
   }
 }
 ```
+
+## Message Translator Pattern Example
+
+The _message translator pattern_ helps to reduce the coupling between event producers and consumers. Two reasons for message translations which can be applied in-flight are: a) to integrate with legacy systems and their proprietary/non-standardized data formats or b) to avoid leaking the domain models in microservice architectures. Translations of events come in many different flavours, e.g. data type conversions, date/time format harmonization, field redaction, name changes, payload format conversions, etc. While the actual translation of events can be implemented in different ways, it is oftentimes beneficial to do this outside of the producing/consuming application's context.
+
+### Example Overview
+
+The repository hosts a basic example which shows how to apply the _message translator pattern_ when processing point-of-sales data. The raw data comes in CSV format and resides on some disk-based storage. The CSV records need to be sent to a web service which expects data in a specific JSON format. For that purpose, Kafka Connect is used to define a streaming data pipeline which translates the original point-of-sales data in-flight. The illustration below shows a high-level overview:
+
+![eda-mtp-overview.png](docs/eda-mtp-overview.png)
+
+### Implementation Details
+
+* For simplicity reasons, the raw input data (`pos_transactions.csv`) is mounted directly into a folder on the Kafka Connect worker node. In general, the data could be read from different internal/external storage systems.
+
+* A Kafka Connect [file source connector](https://github.com/streamthoughts/kafka-connect-file-pulse) is used to produce the csv records into a Kafka topic. In order to match the expected JSON format from the targeted web service, each record is translated on the fly by means of additional configuration which does the following:
+  - convert selected string fields to numeric data types
+  - drop unnecessary fields and rename other fields accordingly
+  - serialize records into the expected JSON format
+
+* A Kafka Connect [http sink connector](https://github.com/aiven/http-connector-for-apache-kafka/) is used to consume and send the data to the web service which is supposed to receive and process the point-of-sales data.
+
+### How to run it?
+
+There are two different ways to run this example scenario.
+
+#### **Docker Compose**
+
+In case you want to run this locally, simply go into the folder 
+`eda-mtp/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output related to the configured Kafka Connect streaming data pipeline. As soon as both, the file source and http sink connectors are started and running, the web service `eda-mtp-consumer` will receive the translated point-of-sales data in batches of up to 10 records each.
+
+1. The `csv` input data can be inspected like so:
+
+`docker compose exec -it connect head /home/files/pos_transactions.csv`
+
+```csv
+WorkstationGroupID,TranID,BeginDateTime,EndDateTime,OperatorID,TranTime,BreakTime,ArtNum,TNcash,TNcard,Amount
+1,19040310601356,2019-04-03T13:28:17,2019-04-03T13:28:17,10,0,1,1,FALSE,FALSE,11.99
+1,19032910607385,2019-03-29T14:04:50,2019-03-29T14:05:31,101,41,21,6,TRUE,FALSE,13.74
+1,19032910607386,2019-03-29T14:05:52,2019-03-29T14:06:35,101,43,44,12,TRUE,FALSE,97.47
+1,19032910607387,2019-03-29T14:07:19,2019-03-29T14:07:43,101,24,25,6,FALSE,TRUE,37.18
+1,19032910607389,2019-03-29T14:08:08,2019-03-29T14:09:44,101,96,18,48,TRUE,FALSE,154.7
+1,19032910607390,2019-03-29T14:10:02,2019-03-29T14:10:02,101,0,270,22,FALSE,FALSE,108.06
+1,19032910607398,2019-03-29T14:14:32,2019-03-29T14:14:45,101,13,33,5,TRUE,FALSE,19.36
+1,19032910607399,2019-03-29T14:15:18,2019-03-29T14:15:49,101,31,71,5,TRUE,FALSE,16.26
+1,19032910607401,2019-03-29T14:17:00,2019-03-29T14:17:57,101,57,45,25,FALSE,TRUE,60.39
+```
+
+2. The Kafka Connect pipeline translates this data on the fly into the expected JSON format. The records in the corresponding Kafka topic `pos-transactions` look as follows:
+
+`docker compose exec -it kafka bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic pos-transactions --from-beginning`
+
+```json5
+...
+
+{"total-amount":23.89,"items-count":9,"datetime":"2019-04-04T12:48:14","operator-id":112,"with-card":true,"with-cash":false,"id":190404106022306}
+{"total-amount":141.08,"items-count":22,"datetime":"2019-04-04T12:50:21","operator-id":112,"with-card":false,"with-cash":true,"id":190404106022308}
+{"total-amount":39.9,"items-count":10,"datetime":"2019-04-04T12:51:03","operator-id":112,"with-card":true,"with-cash":false,"id":190404106022309}
+{"total-amount":106.3,"items-count":25,"datetime":"2019-04-04T12:52:57","operator-id":112,"with-card":true,"with-cash":false,"id":190404106022311}
+{"total-amount":27.49,"items-count":6,"datetime":"2019-04-04T12:53:30","operator-id":112,"with-card":false,"with-cash":true,"id":190404106022313}
+```
+
+3. The logs of the `eda-mtp-consumer` application show that the point-of-sales data is retrieved as a result of the http sink connector pushing the kafka records in batches of max. 10 records to the API endpoint:
+
+`docker compose logs -f eda-mtp-consumer`
+
+```log
+...
+
+eda-mtp-consumer  | 2023-02-20 10:34:21,541 INFO  [io.quarkus] (main) consumer-app 0.1.0 on JVM (powered by Quarkus 2.16.3.Final) started in 8.692s. Listening on: http://0.0.0.0:8080
+eda-mtp-consumer  | 2023-02-20 10:34:21,735 INFO  [io.quarkus] (main) Profile prod activated. 
+eda-mtp-consumer  | 2023-02-20 10:34:21,736 INFO  [io.quarkus] (main) Installed features: [cdi, kubernetes, resteasy-reactive, resteasy-reactive-jackson, smallrye-context-propagation, vertx]
+eda-mtp-consumer  | 2023-02-20 10:34:39,02
+
+...
+
+eda-mtp-consumer  | 2023-02-20 10:34:47,545 DEBUG [com.rh.dev.PosDataResource] (executor-thread-1) 10 transaction(s) received: [TransactionData[id=190404106022278, dateTime=2019-04-04T12:18:46, itemsCount=20, totalAmount=34.14, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022280, dateTime=2019-04-04T12:21:44, itemsCount=30, totalAmount=136.88, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022282, dateTime=2019-04-04T12:25:28, itemsCount=79, totalAmount=384.34, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022284, dateTime=2019-04-04T12:27:22, itemsCount=25, totalAmount=95.25, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022286, dateTime=2019-04-04T12:28:58, itemsCount=28, totalAmount=112.09, operatorId=112, withCard=false, withCash=false], TransactionData[id=190404106022287, dateTime=2019-04-04T12:29:29, itemsCount=5, totalAmount=24.95, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022288, dateTime=2019-04-04T12:30:18, itemsCount=8, totalAmount=34.06, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022289, dateTime=2019-04-04T12:31:27, itemsCount=6, totalAmount=23.77, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022291, dateTime=2019-04-04T12:33:14, itemsCount=12, totalAmount=122.28, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022292, dateTime=2019-04-04T12:35:06, itemsCount=19, totalAmount=48.65, operatorId=112, withCard=true, withCash=false]]
+eda-mtp-consumer  | 2023-02-20 10:34:47,549 DEBUG [com.rh.dev.PosDataResource] (executor-thread-1) 10 transaction(s) received: [TransactionData[id=190404106022294, dateTime=2019-04-04T12:36:09, itemsCount=5, totalAmount=5.32, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022295, dateTime=2019-04-04T12:38:01, itemsCount=25, totalAmount=104.83, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022296, dateTime=2019-04-04T12:40:15, itemsCount=35, totalAmount=327.31, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022298, dateTime=2019-04-04T12:41:14, itemsCount=9, totalAmount=48.98, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022299, dateTime=2019-04-04T12:42:14, itemsCount=17, totalAmount=59.11, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022300, dateTime=2019-04-04T12:43:08, itemsCount=11, totalAmount=43.89, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022301, dateTime=2019-04-04T12:43:46, itemsCount=2, totalAmount=17.22, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022302, dateTime=2019-04-04T12:45:32, itemsCount=20, totalAmount=64.13, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022304, dateTime=2019-04-04T12:47:41, itemsCount=45, totalAmount=163.24, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022306, dateTime=2019-04-04T12:48:14, itemsCount=9, totalAmount=23.89, operatorId=112, withCard=true, withCash=false]]
+eda-mtp-consumer  | 2023-02-20 10:34:47,556 DEBUG [com.rh.dev.PosDataResource] (executor-thread-1) 4 transaction(s) received: [TransactionData[id=190404106022308, dateTime=2019-04-04T12:50:21, itemsCount=22, totalAmount=141.08, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022309, dateTime=2019-04-04T12:51:03, itemsCount=10, totalAmount=39.9, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022311, dateTime=2019-04-04T12:52:57, itemsCount=25, totalAmount=106.3, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022313, dateTime=2019-04-04T12:53:30, itemsCount=6, totalAmount=27.49, operatorId=112, withCard=false, withCash=true]]
+...
+```
+
+#### **Kubernetes**
+
+In case you want to run this example in a Kubernetes environment, there are ready-made YAML manifests you can directly apply to your k8s cluster.
+
+1. Make sure your `kubectl` context is configured properly. 
+2. Then go into the main folder of the example `eda-mtp` and simply run `kubectl apply -f k8s` in your terminal.
+3. All contained `.yaml` files - for infra and app components - will get deployed into your configured cluster.
+
+After a few moments, everything should be up and running fine:
+
+`kubectl get pods`
+
+```bash
+NAME                                READY   STATUS      RESTARTS   AGE
+connect-749cb9cfc4-2scwr            1/1     Running     0          55s
+connectors-creator-28hkv            0/1     Completed   0          55s
+eda-mtp-consumer-69f5cc8785-tzfnx   1/1     Running     0          53s
+kafka-67cbf4cd74-rfjzd              1/1     Running     0          51s
+zookeeper-59f5fb6dff-m4zk5          1/1     Running     0          52s
+```
+
+As soon as both, the file source and http sink connectors are started and running, the web service `eda-mtp-consumer` will receive the translated point-of-sales data in batches of up to 10 records each.
+
+NOTE: you need to adapt the pod names accordingly for any of the following `kubectl` commands.
+
+1. The `csv` input data can be inspected like so:
+
+`kubectl exec -it connect-749cb9cfc4-2scwr -- head /home/pos_transactions.csv`
+
+```csv
+WorkstationGroupID,TranID,BeginDateTime,EndDateTime,OperatorID,TranTime,BreakTime,ArtNum,TNcash,TNcard,Amount
+1,19040310601356,2019-04-03T13:28:17,2019-04-03T13:28:17,10,0,1,1,FALSE,FALSE,11.99
+1,19032910607385,2019-03-29T14:04:50,2019-03-29T14:05:31,101,41,21,6,TRUE,FALSE,13.74
+1,19032910607386,2019-03-29T14:05:52,2019-03-29T14:06:35,101,43,44,12,TRUE,FALSE,97.47
+1,19032910607387,2019-03-29T14:07:19,2019-03-29T14:07:43,101,24,25,6,FALSE,TRUE,37.18
+1,19032910607389,2019-03-29T14:08:08,2019-03-29T14:09:44,101,96,18,48,TRUE,FALSE,154.7
+1,19032910607390,2019-03-29T14:10:02,2019-03-29T14:10:02,101,0,270,22,FALSE,FALSE,108.06
+1,19032910607398,2019-03-29T14:14:32,2019-03-29T14:14:45,101,13,33,5,TRUE,FALSE,19.36
+1,19032910607399,2019-03-29T14:15:18,2019-03-29T14:15:49,101,31,71,5,TRUE,FALSE,16.26
+1,19032910607401,2019-03-29T14:17:00,2019-03-29T14:17:57,101,57,45,25,FALSE,TRUE,60.39
+```
+
+2. The Kafka Connect pipeline translates this data on the fly into the expected JSON format. The records in the corresponding Kafka topic `pos-transactions` look as follows:
+
+`kubectl exec -it kafka-67cbf4cd74-rfjzd -- bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic pos-transactions --from-beginning`
+
+```json5
+...
+
+{"total-amount":23.89,"items-count":9,"datetime":"2019-04-04T12:48:14","operator-id":112,"with-card":true,"with-cash":false,"id":190404106022306}
+{"total-amount":141.08,"items-count":22,"datetime":"2019-04-04T12:50:21","operator-id":112,"with-card":false,"with-cash":true,"id":190404106022308}
+{"total-amount":39.9,"items-count":10,"datetime":"2019-04-04T12:51:03","operator-id":112,"with-card":true,"with-cash":false,"id":190404106022309}
+{"total-amount":106.3,"items-count":25,"datetime":"2019-04-04T12:52:57","operator-id":112,"with-card":true,"with-cash":false,"id":190404106022311}
+{"total-amount":27.49,"items-count":6,"datetime":"2019-04-04T12:53:30","operator-id":112,"with-card":false,"with-cash":true,"id":190404106022313}
+```
+
+3. The logs of the `eda-mtp-consumer` application show that the point-of-sales data is retrieved as a result of the http sink connector pushing the kafka records in batches of max. 10 records to the API endpoint:
+
+`kubectl logs -f eda-mtp-consumer-69f5cc8785-tzfnx`
+
+```log
+2023-02-20 12:04:13,564 INFO [io.quarkus] (main) consumer-app 0.1.0 on JVM (powered by Quarkus 2.16.3.Final) started in 1.665s. Listening on: http://0.0.0.0:8080
+2023-02-20 12:04:13,642 INFO [io.quarkus] (main) Profile prod activated.
+2023-02-20 12:04:13,642 INFO [io.quarkus] (main) Installed features: [cdi, kubernetes, resteasy-reactive, resteasy-reactive-jackson, smallrye-context-propagation, vertx]
+
+...
+2023-02-20 12:04:47,268 DEBUG [com.rh.dev.PosDataResource] (executor-thread-0) 10 transaction(s) received: [TransactionData[id=190404106022282, dateTime=2019-04-04T12:25:28, itemsCount=79, totalAmount=384.34, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022284, dateTime=2019-04-04T12:27:22, itemsCount=25, totalAmount=95.25, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022286, dateTime=2019-04-04T12:28:58, itemsCount=28, totalAmount=112.09, operatorId=112, withCard=false, withCash=false], TransactionData[id=190404106022287, dateTime=2019-04-04T12:29:29, itemsCount=5, totalAmount=24.95, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022288, dateTime=2019-04-04T12:30:18, itemsCount=8, totalAmount=34.06, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022289, dateTime=2019-04-04T12:31:27, itemsCount=6, totalAmount=23.77, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404...
+2023-02-20 12:04:47,269 DEBUG [com.rh.dev.PosDataResource] (executor-thread-0) 10 transaction(s) received: [TransactionData[id=190404106022296, dateTime=2019-04-04T12:40:15, itemsCount=35, totalAmount=327.31, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022298, dateTime=2019-04-04T12:41:14, itemsCount=9, totalAmount=48.98, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022299, dateTime=2019-04-04T12:42:14, itemsCount=17, totalAmount=59.11, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022300, dateTime=2019-04-04T12:43:08, itemsCount=11, totalAmount=43.89, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022301, dateTime=2019-04-04T12:43:46, itemsCount=2, totalAmount=17.22, operatorId=112, withCard=false, withCash=true], TransactionData[id=190404106022302, dateTime=2019-04-04T12:45:32, itemsCount=20, totalAmount=64.13, operatorId=112, withCard=true, withCash=false], TransactionData[id=1904041...
+2023-02-20 12:04:47,271 DEBUG [com.rh.dev.PosDataResource] (executor-thread-0) 2 transaction(s) received: [TransactionData[id=190404106022311, dateTime=2019-04-04T12:52:57, itemsCount=25, totalAmount=106.3, operatorId=112, withCard=true, withCash=false], TransactionData[id=190404106022313, dateTime=2019-04-04T12:53:30, itemsCount=6, totalAmount=27.49, operatorId=112, withCard=false, withCash=true]]
+...
+```
+

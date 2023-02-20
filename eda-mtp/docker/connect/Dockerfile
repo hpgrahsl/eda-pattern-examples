@@ -1,0 +1,15 @@
+#Dockerfile for creating the custom connector image based on strimzi kafka
+
+ARG ARCH=amd64
+ARG STRIMZI_VERSION=0.33.0-kafka-3.3.2
+FROM quay.io/strimzi/kafka:${STRIMZI_VERSION}-${ARCH}
+
+ARG STREAMTHOUGHTS_FILEPULSE_CONNECTOR=streamthoughts-kafka-connect-file-pulse-2.8.0
+ARG HTTP_SINK_CONNECTOR=http-connector-for-apache-kafka-0.6.0
+ARG POS_TRANSACTIONS_FILE=pos_transactions.csv
+
+ENV KAFKA_CONNECT_PLUGIN_PATH=/opt/connectors
+
+COPY ./plugins/${STREAMTHOUGHTS_FILEPULSE_CONNECTOR} $KAFKA_CONNECT_PLUGIN_PATH/${STREAMTHOUGHTS_FILEPULSE_CONNECTOR}/
+COPY ./plugins/${HTTP_SINK_CONNECTOR} $KAFKA_CONNECT_PLUGIN_PATH/${HTTP_SINK_CONNECTOR}/
+COPY --chmod=755 ./files/${POS_TRANSACTIONS_FILE} /home/${POS_TRANSACTIONS_FILE} 

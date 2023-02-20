@@ -1,0 +1,34 @@
+{
+  "name" : "kafka-connect-file-pulse",
+  "version" : "2.8.0",
+  "title" : "Kafka Connect File Pulse",
+  "description" : "The Kafka Connect FilePulse Connector is a powerful source connector that makes it easy to parse, transform, and load data from the local filesystem, Amazon S3, Azure Blob Storage and Google Cloud Storage. This connector supports a variety of formats equally for all storage systems, e.g., text files, CSV, XML, JSON, Avro, Log4j, etc.",
+  "owner" : {
+    "username" : "streamthoughts",
+    "type" : "organization",
+    "name" : "StreamThoughts",
+    "url" : "https://streamthoughts.io/"
+  },
+  "support" : {
+    "summary" : "This connector is supported by the open source community and StreamThoughts as part of its open source offering.",
+    "url" : "https://streamthoughts.io/open-source",
+    "provider_name" : "StreamThoughts"
+  },
+  "tags" : [ "cloud", "log", "xml", "gcs", "grok", "csv", "files", "parsing", "aws", "filesystem", "azure" ],
+  "features" : {
+    "supported_encodings" : [ "any" ],
+    "single_message_transforms" : true,
+    "confluent_control_center_integration" : true,
+    "kafka_connect_api" : true
+  },
+  "logo" : "assets/logo.png",
+  "documentation_url" : "https://github.com/streamthoughts/kafka-connect-file-pulse",
+  "source_url" : "https://github.com/streamthoughts/kafka-connect-file-pulse",
+  "docker_image" : { },
+  "license" : [ {
+    "name" : "The Apache Software License, Version 2.0",
+    "url" : "http://www.apache.org/licenses/LICENSE-2.0.txt"
+  } ],
+  "component_types" : [ "source" ],
+  "release_date" : "2022-11-22"
+}

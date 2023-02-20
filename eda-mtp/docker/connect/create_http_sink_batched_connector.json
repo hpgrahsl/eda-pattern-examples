@@ -1,0 +1,21 @@
+{
+    "name": "http-sink-batched-001",
+    "config": {
+        "connector.class": "io.aiven.kafka.connect.http.HttpSinkConnector",
+        "topics.regex": "pos-transactions",
+        "http.authorization.type": "none",
+        "http.url": "http://eda-mtp-consumer:8080/api/pos/transactions",
+        "batching.enabled": true,
+        "batch.prefix": "[",
+        "batch.separator": ",",
+        "batch.suffix": "]",
+        "batch.max.size": 10,
+        "tasks.max": "1",
+        "max.retries": 3,
+        "retry.backoff.ms": 5000,
+        "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": false,
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter.schemas.enable": false
+    }
+}

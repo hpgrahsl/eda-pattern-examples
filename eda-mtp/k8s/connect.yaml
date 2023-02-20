@@ -1,0 +1,231 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: connect
+  labels:
+    app: connect
+spec:
+  ports:
+    - port: 8083
+      name: connect
+  selector:
+    app: connect
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"kafka"},{"apiVersion":"apps/v1","kind":"Deployment","name":"eda-mtp-consumer"}]'
+  name: connect
+  labels:
+    app: connect
+    app.kubernetes.io/part-of: message-translator-pattern
+spec:
+  selector:
+    matchLabels:
+      app: connect
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: connect
+    spec:
+      containers:
+      - image: quay.io/rhdevelopers/connect-image-eda-mtp-pattern:v23.02
+        name: connect
+        command: [
+          "sh", "-c",
+          "bin/connect-distributed.sh config/connect-distributed.properties"
+        ]
+        env:
+          - name: LOG_DIR
+            value: /tmp/logs
+        volumeMounts:
+            - name: config
+              mountPath: /opt/kafka/config/
+        imagePullPolicy: Always
+      volumes:
+        - name: config
+          configMap:
+            name: connect-config
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: connectors-creator
+  labels:
+    app: connectors-creator
+    app.kubernetes.io/part-of: demo-infra
+spec:
+  template:
+    spec:
+      containers:
+      - name: connectors-creator
+        image: quay.io/debezium/tooling:1.2
+        command: [
+          "bash","/home/register_connectors.sh"
+        ]
+        volumeMounts:
+            - name: connectors-creator
+              mountPath: /home
+
+      restartPolicy: OnFailure
+      volumes:
+        - name: connectors-creator
+          configMap:
+            name: connectors-config
+  backoffLimit: 10
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: connect-config
+  labels:
+    app: connect
+data:
+  connect-log4j.properties: |
+    log4j.rootLogger=INFO, stdout, connectAppender
+
+    log4j.appender.stdout=org.apache.log4j.ConsoleAppender
+    log4j.appender.stdout.layout=org.apache.log4j.PatternLayout
+
+    log4j.appender.connectAppender=org.apache.log4j.DailyRollingFileAppender
+    log4j.appender.connectAppender.DatePattern='.'yyyy-MM-dd-HH
+    log4j.appender.connectAppender.File=${kafka.logs.dir}/connect.log
+    log4j.appender.connectAppender.layout=org.apache.log4j.PatternLayout
+
+    connect.log.pattern=[%d] %p %X{connector.context}%m (%c:%L)%n
+
+    log4j.appender.stdout.layout.ConversionPattern=${connect.log.pattern}
+    log4j.appender.connectAppender.layout.ConversionPattern=${connect.log.pattern}
+
+    log4j.logger.org.apache.zookeeper=ERROR
+    log4j.logger.org.reflections=ERROR
+
+  connect-distributed.properties: |
+    bootstrap.servers=kafka:9092
+    group.id=connect-cluster
+
+    key.converter=org.apache.kafka.connect.json.JsonConverter
+    value.converter=org.apache.kafka.connect.json.JsonConverter
+    
+    key.converter.schemas.enable=true
+    value.converter.schemas.enable=true
+
+    offset.storage.topic=connect-offsets
+    offset.storage.replication.factor=1
+    config.storage.topic=connect-configs
+    config.storage.replication.factor=1
+
+    status.storage.topic=connect-status
+    status.storage.replication.factor=1
+    
+    offset.flush.interval.ms=10000
+    plugin.path=/usr/local/share/java,/usr/local/share/kafka/plugins,/opt/connectors
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: connectors-config
+  labels:
+    app: connect
+data:
+  register_connectors.sh: |
+    #!/bin/bash
+    echo "waiting for kafka connect to start listening..."
+    while [ $(curl -s -o /dev/null -w %{http_code} http://connect:8083/connectors) -eq 000 ] ; do 
+        echo -e $(date) " kafka connect listener HTTP state: " $(curl -s -o /dev/null -w %{http_code} http://connect:8083/connectors) " (waiting for 200)"
+        sleep 1
+    done
+    echo "kafka connect is up!"
+    sleep 5
+    curl -X POST -H "Content-Type: application/json" -d @/home/create_csv_file_source_connector.json http://connect:8083/connectors
+    sleep 10
+    curl -X POST -H "Content-Type: application/json" -d @/home/create_http_sink_batched_connector.json http://connect:8083/connectors
+    echo "done registering connectors"
+
+  create_csv_file_source_connector.json: |
+    {
+      "name": "csv-source-001",
+      "config": {
+          "connector.class":"io.streamthoughts.kafka.connect.filepulse.source.FilePulseSourceConnector",
+          "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+          "key.converter.schemas.enable":false,
+          "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+          "value.converter.schemas.enable":false,
+          "fs.listing.class": "io.streamthoughts.kafka.connect.filepulse.fs.LocalFSDirectoryListing",
+          "fs.listing.directory.path":"/home/",
+          "fs.listing.recursive.enabled":false,
+          "fs.listing.filters":"io.streamthoughts.kafka.connect.filepulse.fs.filter.RegexFileListFilter",
+          "fs.listing.interval.ms":"1000",
+          "fs.cleanup.policy.class": "io.streamthoughts.kafka.connect.filepulse.fs.clean.LogCleanupPolicy",
+          "file.filter.regex.pattern":".*\\.csv$",
+          "tasks.reader.class": "io.streamthoughts.kafka.connect.filepulse.fs.reader.LocalRowFileInputReader",
+          "tasks.file.status.storage.bootstrap.servers": "kafka:9092",
+          "offset.strategy":"name",
+          "skip.headers": "1",
+          "topic":"pos-transactions",
+          "internal.kafka.reporter.bootstrap.servers": "kafka:9092",
+          "internal.kafka.reporter.topic":"connect-file-pulse-status",
+          "tasks.max": 1,
+          "filters":"parse,castAmount,castArtNum,castTranID,castOperatorID,castTNcard,castTNcash",
+          "filters.parse.extractColumnName": "headers",
+          "filters.parse.trimColumn": "true",
+          "filters.parse.separator": ",",
+          "filters.parse.type": "io.streamthoughts.kafka.connect.filepulse.filter.DelimitedRowFilter",
+          "filters.castAmount.type": "io.streamthoughts.kafka.connect.filepulse.filter.AppendFilter",
+          "filters.castAmount.field": "$value.Amount",
+          "filters.castAmount.value": "{{ converts($value.Amount, 'DOUBLE') }}",
+          "filters.castAmount.overwrite": "true",
+          "filters.castArtNum.type": "io.streamthoughts.kafka.connect.filepulse.filter.AppendFilter",
+          "filters.castArtNum.field": "$value.ArtNum",
+          "filters.castArtNum.value": "{{ converts($value.ArtNum, 'INTEGER') }}",
+          "filters.castArtNum.overwrite": "true",
+          "filters.castTranID.type": "io.streamthoughts.kafka.connect.filepulse.filter.AppendFilter",
+          "filters.castTranID.field": "$value.TranID",
+          "filters.castTranID.value": "{{ converts($value.TranID, 'LONG') }}",
+          "filters.castTranID.overwrite": "true",
+          "filters.castOperatorID.type": "io.streamthoughts.kafka.connect.filepulse.filter.AppendFilter",
+          "filters.castOperatorID.field": "$value.OperatorID",
+          "filters.castOperatorID.value": "{{ converts($value.OperatorID, 'INTEGER') }}",
+          "filters.castOperatorID.overwrite": "true",
+          "filters.castTNcard.type": "io.streamthoughts.kafka.connect.filepulse.filter.AppendFilter",
+          "filters.castTNcard.field": "$value.TNcard",
+          "filters.castTNcard.value": "{{ converts($value.TNcard, 'BOOLEAN') }}",
+          "filters.castTNcard.overwrite": "true",
+          "filters.castTNcash.type": "io.streamthoughts.kafka.connect.filepulse.filter.AppendFilter",
+          "filters.castTNcash.field": "$value.TNcash",
+          "filters.castTNcash.value": "{{ converts($value.TNcash, 'BOOLEAN') }}",
+          "filters.castTNcash.overwrite": "true",
+          "transforms": "dropFields,renameFields",
+          "transforms.dropFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+          "transforms.dropFields.exclude": "BeginDateTime,BreakTime,TranTime,WorkstationGroupID",
+          "transforms.renameFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+          "transforms.renameFields.renames": "Amount:total-amount,ArtNum:items-count,EndDateTime:datetime,OperatorID:operator-id,TNcard:with-card,TNcash:with-cash,TranID:id"
+      }
+    }
+
+  create_http_sink_batched_connector.json: |
+    {
+      "name": "http-sink-batched-001",
+      "config": {
+          "connector.class": "io.aiven.kafka.connect.http.HttpSinkConnector",
+          "topics.regex": "pos-transactions",
+          "http.authorization.type": "none",
+          "http.url": "http://eda-mtp-consumer:8080/api/pos/transactions",
+          "batching.enabled": true,
+          "batch.prefix": "[",
+          "batch.separator": ",",
+          "batch.suffix": "]",
+          "batch.max.size": 10,
+          "tasks.max": "1",
+          "max.retries": 3,
+          "retry.backoff.ms": 5000,
+          "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+          "key.converter.schemas.enable": false,
+          "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+          "value.converter.schemas.enable": false
+      }
+    }
