@@ -1,0 +1,114 @@
+version: '2.1'
+services:
+  kafka:
+    hostname: kafka
+    container_name: kafka
+    image: quay.io/strimzi/kafka:0.35.1-kafka-3.4.0
+    command: [
+      "sh", "-c",
+      "./bin/kafka-storage.sh format -t s7-WaK5WR-mnXFWJefRzwg -c ./config/kraft/server.properties && bin/kafka-server-start.sh ./config/kraft/server.properties --override advertised.listeners=$${KAFKA_ADVERTISED_LISTENERS} --override num.partitions=$${KAFKA_NUM_PARTITIONS} --override group.min.session.timeout.ms=$${KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS}"
+    ]
+    ports:
+      - 9092:9092
+    environment:
+      LOG_DIR: "/tmp/logs"
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS: 100
+    networks:
+      - demo-network
+  connect:
+    hostname: connect
+    container_name: connect
+    image: quay.io/strimzi/kafka:0.33.0-kafka-3.3.2
+    command: [
+      "sh", "-c",
+      "bin/connect-distributed.sh config/connect-distributed.properties"
+    ]
+    volumes:
+      - ./connect/config/connect-distributed.properties:/opt/kafka/config/connect-distributed.properties
+      - ./connect/plugins/debezium-connector-mysql:/opt/connectors/debezium-connector-mysql
+    depends_on:
+      - kafka
+      - mysql
+    ports:
+      - 8083:8083
+    networks:
+      - demo-network
+  connectors:
+    hostname: connectors
+    container_name: connectors
+    image: debezium/tooling:latest
+    command: [
+      "sh", "-c",
+      "/home/register_connectors.sh"
+    ]
+    volumes:
+      - ./connect/register_connectors.sh:/home/register_connectors.sh
+      - ./connect/create_mysql_dbz_source_connector.json:/home/create_mysql_dbz_source_connector.json
+    depends_on:
+      - connect
+      - mysql
+    networks:
+      - demo-network
+  mysql:
+    container_name: mysql
+    image: mysql:8.0.32
+    ports:
+      - 3306:3306
+    environment:
+      - MYSQL_ROOT_PASSWORD=debezium
+      - MYSQL_USER=mysqluser
+      - MYSQL_PASSWORD=mysqlpw
+    command: --default-authentication-plugin=mysql_native_password --log-bin=binlog --server-id=12345
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: out=$$(mysqladmin ping -h localhost -P 3306 -u root --password=debezium 2>&1); echo $$out | grep 'mysqld is alive' || { echo $$out; exit 1; }
+      start_period: 20s
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - demo-network
+  eda-op-order-service:
+    hostname: eda-op-order-service
+    container_name: eda-op-order-service
+    image: quay.io/rhdevelopers/eda-op-order-service:v23.09.03
+    depends_on:
+      - mysql
+    networks:
+      - demo-network
+    ports:
+      - 8080:8080
+  orders:
+    hostname: orders
+    container_name: orders
+    image: debezium/tooling:latest
+    command: [
+      "sh", "-c",
+      "/home/create_orders.sh"
+    ]
+    volumes:
+      - ./connect/orders/:/home/
+    depends_on:
+      - eda-op-order-service
+    networks:
+      - demo-network
+  outbox-consumer:
+    hostname: outbox-consumer
+    container_name: outbox-consumer
+    image: quay.io/strimzi/kafka:0.35.1-kafka-3.4.0
+    command: [
+      "sh", "-c",
+      "bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic mysql.outbox_demo.outbox_event --from-beginning"
+    ]
+    depends_on:
+      - kafka
+      - eda-op-order-service
+      - orders
+    networks:
+      - demo-network
+networks:
+  demo-network:
+    name: eda-op-demo
