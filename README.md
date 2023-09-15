@@ -1,6 +1,6 @@
 # Selected Event-Driven Architecture Patterns
 
-This repository hosts selected event-driven architecture patterns based on simple to understand examples that can be run directly with containers (docker / podman and compose files) or within various flavours of kubernetes (YAML manifests):
+This repository hosts simple to understand examples for selected event-driven architecture patterns. Each example is self-contained and can be run directly within containers (docker / podman and compose files) or within various flavours of kubernetes (YAML manifests):
 
 ### 1. [Claim Check Pattern](#claim-check-pattern-example)
 ### 2. [Content Enricher Pattern](#content-enricher-pattern-example)
@@ -37,7 +37,7 @@ There are two different ways to run this example scenario.
 
 #### **Docker Compose**
 
-In case you want to run this locally, simply go into the folder `eda-ccp/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output from the `eda-ccp-producer` and `eda-ccp-consumer` showing that images are produced to / consumed from a Kafka topic. Since the logs are interleaved in the main docker compose window, it's easier to inspect the logs in separate terminal windows as follows:
+In case you want to run this locally, go into the folder `eda-ccp/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output from the `eda-ccp-producer` and `eda-ccp-consumer` showing that images are produced to / consumed from a Kafka topic. Since the logs are interleaved in the main docker compose window, it's easier to inspect the logs in separate terminal windows as follows:
 
 `docker compose logs eda-ccp-producer`
 
@@ -163,7 +163,7 @@ There are two different ways to run this example scenario.
 
 #### **Docker Compose**
 
-In case you want to run this locally, simply go into the folder 
+In case you want to run this locally, go into the folder 
 `eda-cep/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output from the `eda-cep-generator` and `eda-cep-enricher` showing that raw sensor data records are consumed and joined against the device data to produce enriched sensor data. Since the logs are interleaved in the main docker compose window, it's easier to inspect the logs in separate terminal windows as follows:
 
 `docker compose logs eda-cep-generator`
@@ -322,7 +322,7 @@ There are two different ways to run this example scenario.
 
 #### **Docker Compose**
 
-In case you want to run this locally, simply go into the folder 
+In case you want to run this locally, go into the folder 
 `eda-mtp/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output related to the configured Kafka Connect streaming data pipeline. As soon as both, the file source and http sink connectors are started and running, the web service `eda-mtp-consumer` will receive the translated point-of-sales data in batches of up to 10 records each.
 
 1. The `csv` input data can be inspected like so:
@@ -478,7 +478,7 @@ There are two different ways to run this example scenario.
 
 #### **Docker Compose**
 
-In case you want to run this locally, simply go into the folder 
+In case you want to run this locally, go into the folder 
 `eda-op/docker` and run `docker compose up` in your terminal. All components will start and after a while, the order service is ready to receive REST API requests. First, the following two orders are created:
 
 * **order1.json**
@@ -646,7 +646,7 @@ After a while, the order service is ready to receive REST API requests. First, t
 }
 ```
 
-Right afterwards, all the order lines (2 for order 1 - 3 for order 2) are updated one by one for both these orders to set a new order line status.
+Right afterwards, all the order lines (2 for order 1 and 3 for order 2) are updated one by one for both these orders to set a new order line status.
 
 For each of these in total 7 REST API requests, the order service will perform a DB transaction to write into the `order` and `orderlines` tables and additionally write the "to-be-propagated" events into the `outbox_event` table. Debezium will capture the `outbox_event` table row changes and ingest all events into a Kafka topic. 
 
