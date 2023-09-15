@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+spec:
+  ports:
+    - port: 3306
+  selector:
+    app: mysql
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+  labels:
+    app: mysql
+    app.kubernetes.io/part-of: demo-infra
+    app.openshift.io/runtime: mysql-database
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - image: mysql:8.0.32
+        name: mysql
+        args: ["--default-authentication-plugin=mysql_native_password","--log-bin=binlog","--server-id=12345"]
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: debezium
+        - name: MYSQL_USER
+          value: mysqluser
+        - name: MYSQL_PASSWORD
+          value: mysqlpw
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+            - name: db-init
+              mountPath: /docker-entrypoint-initdb.d/
+      volumes:
+        - name: db-init
+          configMap:
+            name: db-init-script
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-init-script
+  labels:
+    app: mysql
+data:
+  init.sql: |
+    CREATE DATABASE IF NOT EXISTS outbox_demo;

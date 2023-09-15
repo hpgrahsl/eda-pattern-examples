@@ -1,0 +1,9 @@
+{
+    "customerId": 9876,
+    "orderDate": "2023-09-01T00:12:34",
+    "lineItems": [
+      {"item": "QWE","quantity": 5, "totalPrice": 10.25},
+      {"item": "POI","quantity": 3, "totalPrice": 25.25},
+      {"item": "STS","quantity": 7, "totalPrice": 5.25}
+    ]
+}

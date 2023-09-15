@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  labels:
+    app: kafka
+spec:
+  ports:
+    - port: 9092
+      name: kafka
+  selector:
+    app: kafka
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  labels:
+    app: kafka
+    app.kubernetes.io/part-of: demo-infra
+spec:
+  selector:
+    matchLabels:
+      app: kafka
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+      - image: quay.io/strimzi/kafka:0.35.1-kafka-3.4.0
+        name: kafka
+        command: [
+          "sh", "-c",
+          "export CLUSTER_ID=$(./bin/kafka-storage.sh random-uuid) && ./bin/kafka-storage.sh format -t $CLUSTER_ID -c ./config/kraft/server.properties && bin/kafka-server-start.sh ./config/kraft/server.properties --override advertised.listeners=$${KAFKA_ADVERTISED_LISTENERS} --override num.partitions=$${KAFKA_NUM_PARTITIONS} --override group.min.session.timeout.ms=$${KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS}"
+        ]
+        env:
+          - name: LOG_DIR
+            value: /tmp/logs
+          - name: KAFKA_ADVERTISED_LISTENERS
+            value: PLAINTEXT://kafka:9092
+          - name: KAFKA_NUM_PARTITIONS
+            value: "1"
+          - name: KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS
+            value: "100"
+        resources:
+          limits:
+            memory: "768Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 9092

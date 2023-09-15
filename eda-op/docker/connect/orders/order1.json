@@ -1,0 +1,8 @@
+{
+    "customerId": 1234,
+    "orderDate": "2022-01-01T12:34:56",
+    "lineItems": [
+      {"item": "ABC","quantity": 12, "totalPrice": 49.25},
+      {"item": "XYZ","quantity": 98, "totalPrice": 99.25}
+    ]
+}

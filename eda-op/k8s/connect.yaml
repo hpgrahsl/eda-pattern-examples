@@ -1,0 +1,170 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: connect
+  labels:
+    app: connect
+spec:
+  ports:
+    - port: 8083
+      name: connect
+  selector:
+    app: connect
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"kafka"},{"apiVersion":"apps/v1","kind":"Deployment","name":"mysql"}]'
+  name: connect
+  labels:
+    app: connect
+    app.kubernetes.io/part-of: demo-infra
+spec:
+  selector:
+    matchLabels:
+      app: connect
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: connect
+    spec:
+      containers:
+      - image: quay.io/rhdevelopers/connect-image-eda-op-pattern:v23.09
+        name: connect
+        command: [
+          "sh", "-c",
+          "bin/connect-distributed.sh config/connect-distributed.properties"
+        ]
+        env:
+          - name: LOG_DIR
+            value: /tmp/logs
+        volumeMounts:
+            - name: config
+              mountPath: /opt/kafka/config/
+      volumes:
+        - name: config
+          configMap:
+            name: connect-config
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"connect"}]'
+  name: connectors-creator
+  labels:
+    app: connectors-creator
+    app.kubernetes.io/part-of: demo-infra
+spec:
+  template:
+    spec:
+      containers:
+      - name: connectors-creator
+        image: quay.io/debezium/tooling:1.2
+        command: [
+          "bash","/home/register_connectors.sh"
+        ]
+        volumeMounts:
+            - name: connectors-creator
+              mountPath: /home
+      restartPolicy: OnFailure
+      volumes:
+        - name: connectors-creator
+          configMap:
+            name: connectors-config
+  backoffLimit: 10
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: connect-config
+  labels:
+    app: connect
+data:
+  connect-log4j.properties: |
+    log4j.rootLogger=INFO, stdout, connectAppender
+
+    log4j.appender.stdout=org.apache.log4j.ConsoleAppender
+    log4j.appender.stdout.layout=org.apache.log4j.PatternLayout
+
+    log4j.appender.connectAppender=org.apache.log4j.DailyRollingFileAppender
+    log4j.appender.connectAppender.DatePattern='.'yyyy-MM-dd-HH
+    log4j.appender.connectAppender.File=${kafka.logs.dir}/connect.log
+    log4j.appender.connectAppender.layout=org.apache.log4j.PatternLayout
+
+    connect.log.pattern=[%d] %p %X{connector.context}%m (%c:%L)%n
+
+    log4j.appender.stdout.layout.ConversionPattern=${connect.log.pattern}
+    log4j.appender.connectAppender.layout.ConversionPattern=${connect.log.pattern}
+
+    log4j.logger.org.apache.zookeeper=ERROR
+    log4j.logger.org.reflections=ERROR
+
+  connect-distributed.properties: |
+    bootstrap.servers=kafka:9092
+    group.id=connect-cluster
+
+    key.converter=org.apache.kafka.connect.json.JsonConverter
+    value.converter=org.apache.kafka.connect.json.JsonConverter
+    
+    key.converter.schemas.enable=true
+    value.converter.schemas.enable=true
+
+    offset.storage.topic=connect-offsets
+    offset.storage.replication.factor=1
+    config.storage.topic=connect-configs
+    config.storage.replication.factor=1
+
+    status.storage.topic=connect-status
+    status.storage.replication.factor=1
+    
+    offset.flush.interval.ms=10000
+    plugin.path=/usr/local/share/java,/usr/local/share/kafka/plugins,/opt/connectors
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: connectors-config
+  labels:
+    app: connect
+data:
+  register_connectors.sh: |
+    #!/bin/bash
+    echo "waiting for kafka connect to start listening..."
+    while [ $(curl -s -o /dev/null -w %{http_code} http://connect:8083/connectors) -eq 000 ] ; do 
+        echo -e $(date) " kafka connect listener HTTP state: " $(curl -s -o /dev/null -w %{http_code} http://connect:8083/connectors) " (waiting for 200)"
+        sleep 2
+    done
+    echo "kafka connect is up!"
+    sleep 5
+    curl -X POST -H "Content-Type: application/json" -d @/home/create_mysql_dbz_source_connector.json http://connect:8083/connectors
+    echo "done registering connectors"
+
+  create_mysql_dbz_source_connector.json: |
+    {
+    "name": "mysql-outbox-src-connector-01",
+    "config": {
+      "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+      "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "key.converter.schemas.enable": false,
+      "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+      "value.converter.schemas.enable": false,
+      "tasks.max": "1",
+      "database.hostname": "mysql",
+      "database.port": "3306",
+      "database.user": "root",
+      "database.password": "debezium",
+      "database.server.id": "12345",
+      "database.include.list": "outbox_demo",
+      "table.include.list": "outbox_demo.outbox_event",
+      "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+      "schema.history.internal.kafka.topic": "schemachanges.outbox_demo",
+      "topic.prefix": "mysql",
+      "tombstones.on.delete": false,
+      "include.schema.changes": false
+      }
+    }
