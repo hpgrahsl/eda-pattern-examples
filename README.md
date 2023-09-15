@@ -1,8 +1,15 @@
-# Event-Driven Architecture Patterns
+# Selected Event-Driven Architecture Patterns
+
+This repository hosts selected event-driven architecture patterns based on simple to understand examples that can be run directly with containers (docker / podman and compose files) or within various flavours of kubernetes (YAML manifests):
+
+### 1. [Claim Check Pattern](#claim-check-pattern-example)
+### 2. [Content Enricher Pattern](#content-enricher-pattern-example)
+### 3. [Message Translator Pattern](#message-translator-pattern-example)
+### 4. [Outbox Pattern](#outbox-pattern-example)
 
 ## Claim Check Pattern Example
 
-The _claim check pattern_ pattern comes in very handy when applications need to communicate larger events to downstream consumers. The core idea is not to directly send larger objects (e.g. images, videos, documents, ...) as part of the payload across messaging or event streaming infrastructure. Instead, the large message is split into two parts:
+The _claim check pattern_ pattern comes in very handy when applications need to communicate large event payloads to downstream consumers. The core idea is not to directly send large objects (e.g. images, videos, documents, ...) as part of the payload across messaging or event streaming infrastructure. Instead, the large message is split into two parts:
 
 1. **claim check:** some unique identifier to a database record or more appropriately a reference to an object in some storage service
 
@@ -30,7 +37,7 @@ There are two different ways to run this example scenario.
 
 #### **Docker Compose**
 
-In case you want to run this locally, simply go into the folder `eda-cpp/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output from the `eda-ccp-producer` and `eda-ccp-consumer` showing that images are produced to / consumed from a Kafka topic. Since the logs are interleaved in the main docker compose window, it's easier to inspect the logs in separate terminal windows as follows:
+In case you want to run this locally, simply go into the folder `eda-ccp/docker` and run `docker compose up` in your terminal. All components will start and after a couple of moments, you should see log output from the `eda-ccp-producer` and `eda-ccp-consumer` showing that images are produced to / consumed from a Kafka topic. Since the logs are interleaved in the main docker compose window, it's easier to inspect the logs in separate terminal windows as follows:
 
 `docker compose logs eda-ccp-producer`
 
@@ -76,7 +83,7 @@ console-consumer  | /home/data/images/cristofer-maximilian-uQDRDqpYJHI-unsplash.
 In case you want to run this example in a Kubernetes environment, there are ready-made YAML manifests you can directly apply to your k8s cluster.
 
 1. Make sure your `kubectl` context is configured properly. 
-2. Then go into the main folder of the example `eda-cpp` and simply run `kubectl apply -f k8s` in your terminal.
+2. Then go into the main folder of the example `eda-ccp` and run `kubectl apply -f k8s/` in your terminal.
 3. All contained `.yaml` files - for infra and app components -  will get deployed into your configured cluster.
 
 After a few moments, everything should be up and running fine:
@@ -215,7 +222,7 @@ which should give you a document similar to the following
 In case you want to run this example in a Kubernetes environment, there are ready-made YAML manifests you can directly apply to your k8s cluster.
 
 1. Make sure your `kubectl` context is configured properly. 
-2. Then go into the main folder of the example `eda-cep` and simply run `kubectl apply -f k8s` in your terminal.
+2. Then go into the main folder of the example `eda-cep` and run `kubectl apply -f k8s/` in your terminal.
 3. All contained `.yaml` files - for infra and app components -  will get deployed into your configured cluster.
 
 After a few moments, everything should be up and running fine:
@@ -374,7 +381,7 @@ eda-mtp-consumer  | 2023-02-20 10:34:47,556 DEBUG [com.rh.dev.PosDataResource] (
 In case you want to run this example in a Kubernetes environment, there are ready-made YAML manifests you can directly apply to your k8s cluster.
 
 1. Make sure your `kubectl` context is configured properly. 
-2. Then go into the main folder of the example `eda-mtp` and simply run `kubectl apply -f k8s` in your terminal.
+2. Then go into the main folder of the example `eda-mtp` and run `kubectl apply -f k8s/` in your terminal.
 3. All contained `.yaml` files - for infra and app components - will get deployed into your configured cluster.
 
 After a few moments, everything should be up and running fine:
@@ -441,3 +448,284 @@ WorkstationGroupID,TranID,BeginDateTime,EndDateTime,OperatorID,TranTime,BreakTim
 ...
 ```
 
+## Outbox Pattern Example
+
+The _outbox pattern_ addresses the challenge of reliably updating two systems when performing inter-service communication in event-driven architectures. It's a rather common requirement that services need to write to their own database and, at the same time, are supposed to also send events to some messaging infrastructure. Doing so with separate writes against the two different system is what results in the so-called "dual writes" problem. This approach is error-prone and will lead to data inconsistencies because in general, there is no single transactional scope spanning these write operations. However, thanks to the outbox pattern, there is a reliable way to achieve that. The idea behind it is, that a service will only ever write to its own database. Within one and the same transactional scope, the service performs changes to the data tables in question and additionally writes corresponding events into a dedicated outbox table, residing in the same database. The outbox table events are then propagated to some messaging infrastructure by means of a separate process.
+
+### Example Overview
+
+The repository hosts a basic example which shows how to apply the _outbox pattern_ in the context of an order service. Whenever a request comes in, to either create a new order or to change specific order lines, the order service will perform the following operations within the scope of a single database transaction:
+- write domain data changes to the order and/or orderlines tables
+- write event data to the outbox table
+
+This guarantees that all writes to multiple tables are either successfully written or rolled back in case of any errors.
+
+Kafka Connect is used to capture the events from the outbox table by means of a CDC source connector and ingest them into a corresponding Kafka topics. Any interested downstream consumer application can read and process the outbox table events on demand in near real-time. The illustration below shows a high-level overview:
+
+![eda-op-overview.png](docs/eda-op-overview.png)
+
+### Implementation Details
+
+* The order service is implemented based on [Spring Boot](https://spring.io/projects/spring-boot) and writes to a [MySQL](https://www.mysql.com/) database.
+
+* The [Debezium connector for MySQL](https://debezium.io/documentation/reference/2.3/connectors/mysql.html) is used for change-data-capture. The connector is run within Kafka Connect and ingests all events originating from the outbox table (MySQL database) into a Kafka topic.
+
+* Instead of an actual application, a simple Kafka console consumer is used to read and inspect all outbox events from the Kafka topic.
+
+### How to run it?
+
+There are two different ways to run this example scenario.
+
+#### **Docker Compose**
+
+In case you want to run this locally, simply go into the folder 
+`eda-op/docker` and run `docker compose up` in your terminal. All components will start and after a while, the order service is ready to receive REST API requests. First, the following two orders are created:
+
+* **order1.json**
+
+```json
+{
+    "customerId": 1234,
+    "orderDate": "2022-01-01T12:34:56",
+    "lineItems": [
+      {"item": "ABC","quantity": 12, "totalPrice": 49.25},
+      {"item": "XYZ","quantity": 98, "totalPrice": 99.25}
+    ]
+}
+```
+
+* **order2.json**
+
+```json
+{
+    "customerId": 9876,
+    "orderDate": "2023-09-01T00:12:34",
+    "lineItems": [
+      {"item": "QWE","quantity": 5, "totalPrice": 10.25},
+      {"item": "POI","quantity": 3, "totalPrice": 25.25},
+      {"item": "STS","quantity": 7, "totalPrice": 5.25}
+    ]
+}
+```
+
+Right afterwards, all the order lines (2 for order 1 and 3 for order 2) are updated one by one for both these orders to set a new order line status.
+
+For each of these in total 7 REST API requests, the order service will perform a DB transaction to write into the `order` and `orderlines` tables and additionally write the "to-be-propagated" events into the `outbox_event` table. Debezium will capture the `outbox_event` table row changes and ingest all events into a Kafka topic. 
+
+As a result, the outbox topic consumer will receive all order related events - 24 in total in this case - which can be inspected by showing its log output using `docker compose logs outbox-consumer`. Two exemplary events - one for each of the two event types - are shown below:
+
+* **OrderUpsertedEvent**
+
+```json
+{
+  "before": null,
+  "after": {
+    "id": "55c885fb-fb3a-47f9-8742-667a0a0a6499",
+    "aggregate_id": "1",
+    "aggregate_type": "com.github.hpgrahsl.ms.outbox.sample.model.PurchaseOrder",
+    "payload": "{\"id\":1,\"customerId\":1234,\"orderDate\":\"2022-01-01T12:34:56.000\",\"lineItems\":[{\"id\":1,\"item\":\"ABC\",\"quantity\":12,\"totalPrice\":49.25,\"status\":\"ENTERED\"},{\"id\":2,\"item\":\"XYZ\",\"quantity\":98,\"totalPrice\":99.25,\"status\":\"ENTERED\"}],\"totalValue\":148.5}",
+    "timestamp": 1694782889,
+    "type": "com.github.hpgrahsl.ms.outbox.sample.event.OrderUpsertedEvent"
+  },
+  "source": {
+    "version": "2.1.2.Final",
+    "connector": "mysql",
+    "name": "mysql",
+    "ts_ms": 1694782890000,
+    "snapshot": "false",
+    "db": "outbox_demo",
+    "sequence": null,
+    "table": "outbox_event",
+    "server_id": 12345,
+    "gtid": null,
+    "file": "binlog.000003",
+    "pos": 4303,
+    "row": 0,
+    "thread": 15,
+    "query": null
+  },
+  "op": "c",
+  "ts_ms": 1694782890049,
+  "transaction": null
+}
+```
+
+* **OrderLineUpdatedEvent**
+
+```json
+{
+  "before": null,
+  "after": {
+    "id": "73314c68-0b97-4d15-9546-eedf6a3a86a6",
+    "aggregate_id": "1",
+    "aggregate_type": "com.github.hpgrahsl.ms.outbox.sample.model.PurchaseOrder",
+    "payload": "{\"orderId\":1,\"orderLineId\":1,\"oldStatus\":\"ENTERED\",\"newStatus\":\"CANCELLED\"}",
+    "timestamp": 1694782892,
+    "type": "com.github.hpgrahsl.ms.outbox.sample.event.OrderLineUpdatedEvent"
+  },
+  "source": {
+    "version": "2.1.2.Final",
+    "connector": "mysql",
+    "name": "mysql",
+    "ts_ms": 1694782892000,
+    "snapshot": "false",
+    "db": "outbox_demo",
+    "sequence": null,
+    "table": "outbox_event",
+    "server_id": 12345,
+    "gtid": null,
+    "file": "binlog.000003",
+    "pos": 7915,
+    "row": 0,
+    "thread": 15,
+    "query": null
+  },
+  "op": "c",
+  "ts_ms": 1694782892807,
+  "transaction": null
+}
+```
+
+**NOTE:** in total there should be **24 outbox events resulting from the 7 REST API calls** against the order service:
+
+- **Each of the two order creation requests generates 1 event** (_1 OrderUpsertedEvent_) => 2 events
+- **Each of the five order line change requests generates 2 events** (_1 OrderLineChangedEvent_ plus _1 OrderUpsertedEvent_) => 10 events
+- **Every `INSERT` to the outbox table is followed by a `DELETE`.** This allows to keep the outbox table effectively empty at all times. Otherwise the outbox table would grow indefinitely. 12 `INSERTs` (see above) are thus followed by 12 `DELETEs` => 12 more events
+
+#### **Kubernetes**
+
+In case you want to run this example in a Kubernetes environment, there are ready-made YAML manifests you can directly apply to your k8s cluster.
+
+1. Make sure your `kubectl` context is configured properly. 
+2. Then go into the main folder of the example `eda-op` and run `kubectl apply -f k8s/` in your terminal.
+3. All contained `.yaml` files - for infra and app components - will get deployed into your configured cluster.
+
+After a few moments, everything should be up and running fine:
+
+`kubectl get pods`
+
+```bash
+NAME                                    READY   STATUS    RESTARTS   AGE
+connect-599595bf4c-szqvd                1/1     Running   0          61s
+connectors-creator-7tbtz                1/1     Running   0          61s
+eda-op-order-service-547b9b588c-4sbrz   0/1     Running   0          59s
+kafka-687885cc77-vkcwx                  1/1     Running   0          58s
+mysql-758c48b565-hlcxk                  1/1     Running   0          57s
+orders-creator-gmt4q                    1/1     Running   0          56s
+outbox-consumer-559f9fc6d7-2ss5h        1/1     Running   0          59s
+```
+
+NOTE: you need to adapt the pod names accordingly for any of the following `kubectl` commands.
+
+After a while, the order service is ready to receive REST API requests. First, the following two orders are created by the `orders-creator` job:
+
+* **order1.json**
+
+```json
+{
+    "customerId": 1234,
+    "orderDate": "2022-01-01T12:34:56",
+    "lineItems": [
+      {"item": "ABC","quantity": 12, "totalPrice": 49.25},
+      {"item": "XYZ","quantity": 98, "totalPrice": 99.25}
+    ]
+}
+```
+
+* **order2.json**
+
+```json
+{
+    "customerId": 9876,
+    "orderDate": "2023-09-01T00:12:34",
+    "lineItems": [
+      {"item": "QWE","quantity": 5, "totalPrice": 10.25},
+      {"item": "POI","quantity": 3, "totalPrice": 25.25},
+      {"item": "STS","quantity": 7, "totalPrice": 5.25}
+    ]
+}
+```
+
+Right afterwards, all the order lines (2 for order 1 - 3 for order 2) are updated one by one for both these orders to set a new order line status.
+
+For each of these in total 7 REST API requests, the order service will perform a DB transaction to write into the `order` and `orderlines` tables and additionally write the "to-be-propagated" events into the `outbox_event` table. Debezium will capture the `outbox_event` table row changes and ingest all events into a Kafka topic. 
+
+As a result, the outbox topic consumer will receive all order related events - 24 in total in this case - which can be inspected by showing its log output using `kubectl logs outbox-consumer-559f9fc6d7-2ss5h`. Two exemplary events - one for each of the two event types - are shown below:
+
+* **OrderUpsertedEvent**
+
+```json
+{
+  "before": null,
+  "after": {
+    "id": "6fd1b227-014c-448c-8d95-8fc17ca8daf0",
+    "aggregate_id": "1",
+    "aggregate_type": "com.github.hpgrahsl.ms.outbox.sample.model.PurchaseOrder",
+    "payload": "{\"id\":1,\"customerId\":1234,\"orderDate\":\"2022-01-01T12:34:56.000\",\"lineItems\":[{\"id\":1,\"item\":\"ABC\",\"quantity\":12,\"totalPrice\":49.25,\"status\":\"ENTERED\"},{\"id\":2,\"item\":\"XYZ\",\"quantity\":98,\"totalPrice\":99.25,\"status\":\"ENTERED\"}],\"totalValue\":148.5}",
+    "timestamp": 1694790626,
+    "type": "com.github.hpgrahsl.ms.outbox.sample.event.OrderUpsertedEvent"
+  },
+  "source": {
+    "version": "2.1.2.Final",
+    "connector": "mysql",
+    "name": "mysql",
+    "ts_ms": 1694790626000,
+    "snapshot": "false",
+    "db": "outbox_demo",
+    "sequence": null,
+    "table": "outbox_event",
+    "server_id": 12345,
+    "gtid": null,
+    "file": "binlog.000003",
+    "pos": 4303,
+    "row": 0,
+    "thread": 8,
+    "query": null
+  },
+  "op": "c",
+  "ts_ms": 1694790626696,
+  "transaction": null
+}
+```
+
+* **OrderLineUpdatedEvent**
+
+```json
+{
+  "before": null,
+  "after": {
+    "id": "2e4609e9-ed60-41c7-aa8f-c3839e8378e7",
+    "aggregate_id": "1",
+    "aggregate_type": "com.github.hpgrahsl.ms.outbox.sample.model.PurchaseOrder",
+    "payload": "{\"orderId\":1,\"orderLineId\":1,\"oldStatus\":\"ENTERED\",\"newStatus\":\"CANCELLED\"}",
+    "timestamp": 1694790628,
+    "type": "com.github.hpgrahsl.ms.outbox.sample.event.OrderLineUpdatedEvent"
+  },
+  "source": {
+    "version": "2.1.2.Final",
+    "connector": "mysql",
+    "name": "mysql",
+    "ts_ms": 1694790628000,
+    "snapshot": "false",
+    "db": "outbox_demo",
+    "sequence": null,
+    "table": "outbox_event",
+    "server_id": 12345,
+    "gtid": null,
+    "file": "binlog.000003",
+    "pos": 7915,
+    "row": 0,
+    "thread": 8,
+    "query": null
+  },
+  "op": "c",
+  "ts_ms": 1694790628889,
+  "transaction": null
+}
+```
+
+**NOTE:** in total there should be **24 outbox events resulting from the 7 REST API calls** against the order service:
+
+- **Each of the two order creation requests generates 1 event** (_1 OrderUpsertedEvent_) => 2 events
+- **Each of the five order line change requests generates 2 events** (_1 OrderLineChangedEvent_ plus _1 OrderUpsertedEvent_) => 10 events
+- **Every `INSERT` to the outbox table is followed by a `DELETE`.** This allows to keep the outbox table effectively empty at all times. Otherwise the outbox table would grow indefinitely. 12 `INSERTs` (see above) are thus followed by 12 `DELETEs` => 12 more events
