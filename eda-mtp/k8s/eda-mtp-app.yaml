@@ -34,3 +34,31 @@ spec:
         name: eda-mtp-consumer
         ports:
         - containerPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"kafka"}]'
+  name: topic-consumer
+  labels:
+    app: topic-consumer
+    app.kubernetes.io/part-of: message-translator-pattern
+spec:
+  selector:
+    matchLabels:
+      app: topic-consumer
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: topic-consumer
+    spec:
+      containers:
+      - name: topic-consumer
+        image: quay.io/strimzi/kafka:0.35.1-kafka-3.4.0
+        command: [
+          "sh", "-c",
+          "bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic pos-transactions --from-beginning"
+        ]

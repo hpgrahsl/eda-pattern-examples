@@ -20,7 +20,7 @@ metadata:
   name: connect
   labels:
     app: connect
-    app.kubernetes.io/part-of: message-translator-pattern
+    app.kubernetes.io/part-of: demo-infra
 spec:
   selector:
     matchLabels:
@@ -54,6 +54,8 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
+  annotations:
+    app.openshift.io/connects-to: '[{"apiVersion":"apps/v1","kind":"Deployment","name":"connect"}]'
   name: connectors-creator
   labels:
     app: connectors-creator
